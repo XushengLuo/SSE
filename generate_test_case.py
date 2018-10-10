@@ -11,8 +11,8 @@ import pickle
 
 class TestCase(object):
     def __init__(self):
-        self.p =8
-        self.n = 5
+        self.p = 150
+        self.n = 100
         self.tau = self.n
         # Generate a system with a random A matrix
         self.A = random(self.n, self.n, 0.3)
@@ -27,18 +27,24 @@ class TestCase(object):
         self.sys = ss(self.A, np.zeros((self.n, 1)), self.C, np.zeros((self.p, 1)), self.Ts)
         self.x0 = np.random.randn(self.n, 1)
 
-        self.attackpower = 20  # Magnitude of the attacks (i.e., norm of the attack vector)
-        self.max_s = int(np.floor(self.p // 2 - 1) - 1)
-        self.s = 2 # np.random.randint(0, self.max_s, 1)[0]
+        self.attackpower = 100 # Magnitude of the attacks (i.e., norm of the attack vector)
+        self.max_s = int(np.floor(self.p // 3) - 1)
+        self.s = self.max_s # np.random.randint(0, self.max_s, 1)[0]
 
         # Choose a random attacking set K of size qs
         self.per = np.random.permutation(self.p)
+        # self.per = sorted(range(0, self.p), reverse=True)
         self.K = self.per[0:self.s]
 
         # Choose an initial condition
         x = self.x0
         Y = np.array([]).reshape(self.p, 0)
         E = np.array([]).reshape(self.p, 0)
+        # noise power
+        noise_power = 0.01
+        process_noise_power = 0.05
+        self.noise_bound = np.array([20]*self.p).reshape(self.p, 1)  # 20
+
         for i in range(0, self.tau):
             # Generate a random attack vector supported on K
             a = np.zeros((self.p, 1))
@@ -46,11 +52,11 @@ class TestCase(object):
             E = np.concatenate((E, a), axis=1)
 
             # The measurement is y=C*x+a
-            y = self.C.dot(x) + a
+            y = self.C.dot(x) + a + noise_power * np.random.randn(self.p, 1)  # np.random.uniform(-1, 1, (self.p, 1))
             # Update the arrays X,Y,E
             Y = np.concatenate((Y, y), axis=1)
 
-            x = self.A.dot(x)
+            x = self.A.dot(x) + process_noise_power * np.random.randn(self.n, 1) # np.random.uniform(-1, 1, (self.n, 1))
 
         self.Y = np.transpose(Y).reshape(np.size(Y), 1, order='F')
         self.E = np.transpose(E).reshape(np.size(E), 1, order='F')
@@ -86,3 +92,8 @@ with open('sse_test', 'wb') as filehandle:
             pickle.dump(testCase.K, filehandle)
             pickle.dump(testCase.x0, filehandle)
             pickle.dump(testCase.E, filehandle)
+            pickle.dump(testCase.noise_bound, filehandle)
+            pickle.dump(testCase.A, filehandle)
+            pickle.dump(testCase.C, filehandle)
+
+

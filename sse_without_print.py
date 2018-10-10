@@ -25,6 +25,15 @@ class SecureStateEsitmation:
             self.K = pickle.load(filehandle)
             self.x0 = pickle.load(filehandle)
             self.E = pickle.load(filehandle)
+            self.noise_bound = pickle.load(filehandle)
+            self.A = pickle.load(filehandle)
+            self.C = pickle.load(filehandle)
+
+    def obs(self):
+        import control
+        obs = control.obsv(self.A, self.C)
+        rank = np.linalg.matrix_rank(obs)
+        print("rank", rank, "n", self.n)
 
     def residual(self, indexOfZero):
         index = [x + y for x, y in product([-1 * i * self.tau for i in indexOfZero], range(self.tau))]
@@ -33,17 +42,20 @@ class SecureStateEsitmation:
         x, res, _, _ = la.lstsq(O, Y)
         res = np.linalg.norm(Y - O.dot(x))
 
-        if res <= self.tol:
+        if res <= self.tol + np.linalg.norm(self.noise_bound[np.array(indexOfZero) * -1, :]):
             # if np.shape(res) == (0, ) or res[0] <= self.tol:  # one intersection point
             return True
         else:  # no intersection point
             return False
 
-    def genChild(self, parentnode, childnode, attack):
+    def genChild(self, parentnode, childnode, attack, invalidSet):
         """Generating childnote
         """
         childnode.attack = attack
         childnode.level = parentnode.level - 1  # negative, convenient when enqueued
+        if childnode in invalidSet:
+            childnode.accmuResidual = False
+            return
         childnode.parent = parentnode
         childnode.numOfAttacked = parentnode.numOfAttacked + attack
         childnode.indexOfZero = parentnode.indexOfZero + [childnode.level] if not attack else parentnode.indexOfZero
@@ -93,11 +105,13 @@ def main():
 
     # Initializing frontier
     frontier = queue.PriorityQueue()
-    discard = queue.PriorityQueue()
+    discard = queue.PriorityQueue()   # for lazy research when previous search fails
     # a priority queue ordered by PATH-COST, with node as the only element
     frontier.put(root)
     # Initializing explored set
     exploredSet = set()  # set
+    # reserve invalid node
+    invalidSet = set()
 
     while True:
 
@@ -107,13 +121,13 @@ def main():
 
         # chooses the lowest-cost node in frontier
         node = frontier.get()
-        print("node: ", [i * -1 + 1 for i in node.indexOfZero], node.level * -1 + 1)
+        # print("node: ", [i * -1 + 1 for i in node.indexOfZero], node.level * -1 + 1)
 
         # stop condition: when there is no state cost in the frontier
         # less than the temporary optimal cost
 
         if node.level == -1 * (sse.p - 1):
-            if len(node.indexOfZero) <= sse.p//2:
+            if sse.p - len(node.indexOfZero) > sse.p//2 - 1:
                 frontier.queue.clear()
                 frontier.put(discard.get())
                 exploredSet.clear()
@@ -139,30 +153,36 @@ def main():
             break
 
         # node with node.state has been expanded
-        if node in exploredSet:
-            discard.put(node)
-            continue
-            # if we differentiate the difference of indexZero, it will expand the whole search dimension,
-            # which will be much slower
-        else:
-            # add node.STATE to explored
-            exploredSet.add(node)
+        # if node in exploredSet:
+        #     discard.put(node)
+        #     continue
+        #     # if we differentiate the difference of indexZero, it will expand the whole search dimension,
+        #     # which will be much slower
+        # else:
+        #     # add node.STATE to explored
+        #     exploredSet.add(node)
+        exploredSet.add(node)
 
         for attack in [0, 1]:
 
             # child CHILD-NODE(problem,node,action)
             childNode = Node()
-            sse.genChild(node, childNode, attack)
-            print("childnode: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
+            sse.genChild(node, childNode, attack, invalidSet)
+
+            # print("childnode: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
 
             if childNode.accmuResidual:
                 # only consider 0 residual
                 # option 1
                 # frontier.put(childNode)
                 # option 2
+                if childNode in exploredSet:
+                    discard.put(childNode)
+                    continue
+
                 q = frontier.queue
                 if childNode not in q:
-                    print("childnode accepted: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
+                    # print("childnode accepted: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
                     frontier.put(childNode)
                 else:  # having equal attack indicator and level
                     indices = q.index(childNode)
@@ -172,27 +192,41 @@ def main():
                     else:
                         discard.put(childNode)
 
+            if (-1 * childNode.level + 1) - len(childNode.indexOfZero) > sse.p//2 - 1:
+                frontier.queue.clear()
+                frontier.put(discard.get())
+                exploredSet.clear()
+                break
+
     return True
 
 
 if __name__ == "__main__":
     start = datetime.datetime.now()
     main()
-    # trial = 0
-    # while True:
-    #     trial = trial + 1
-    #     testCase = TestCase()
-    #     with open('sse_test', 'wb') as filehandle:
-    #         pickle.dump(testCase.Y, filehandle)
-    #         pickle.dump(testCase.obsMatrix, filehandle)
-    #         pickle.dump([testCase.p, testCase.n, testCase.tau], filehandle)
-    #         pickle.dump(testCase.K, filehandle)
-    #         pickle.dump(testCase.x0, filehandle)
-    #         pickle.dump(testCase.E, filehandle)
-    #     start = datetime.datetime.now()
-    #     if not main():
-    #         break
-    # print(trial)
+    trial = 0
+    from generate_test_case import TestCase
+    while True:
+        trial = trial + 1
+        testCase = TestCase()
+        with open('sse_test', 'wb') as filehandle:
+            pickle.dump(testCase.Y, filehandle)
+            pickle.dump(testCase.obsMatrix, filehandle)
+            pickle.dump([testCase.p, testCase.n, testCase.tau], filehandle)
+            pickle.dump(testCase.K, filehandle)
+            pickle.dump(testCase.x0, filehandle)
+            pickle.dump(testCase.E, filehandle)
+            pickle.dump(testCase.noise_bound, filehandle)
+            pickle.dump(testCase.A, filehandle)
+            pickle.dump(testCase.C, filehandle)
+        start = datetime.datetime.now()
+        # print(sorted([i + 1 for i in testCase.K]))
+        if not main():
+            break
+    print(trial)
 
+# reason for failure
+# (1) system not observable
+# (2) system not 2s-sparse observable
 
 # save all discarded elements in another priority queue, then empty the existing priority queue.

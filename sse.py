@@ -11,7 +11,6 @@ import pickle
 from itertools import product
 import scipy.linalg as la
 import warnings
-# from generate_test_case import TestCase
 
 class SecureStateEsitmation:
     def __init__(self):
@@ -39,7 +38,7 @@ class SecureStateEsitmation:
         else:  # no intersection point
             return False
 
-    def genChild(self, parentnode, childnode, attack):
+    def genChild(self, parentnode, childnode, attack, free_comb):
         """Generating childnote
         """
         childnode.attack = attack
@@ -47,7 +46,20 @@ class SecureStateEsitmation:
         childnode.parent = parentnode
         childnode.numOfAttacked = parentnode.numOfAttacked + attack
         childnode.indexOfZero = parentnode.indexOfZero + [childnode.level] if not attack else parentnode.indexOfZero
-        childnode.accmuResidual = True if attack else self.residual(childnode.indexOfZero)
+
+        id = 0
+        if attack:
+            childnode.accmuResidual = True
+        elif free_comb:
+            for s in free_comb:
+                if set(childnode.indexOfZero) <= set(s):
+                    childnode.accmuResidual = True
+                    id = 1
+        if not id:
+            childnode.accmuResidual = self.residual(childnode.indexOfZero)
+            if childnode.accmuResidual:
+                free_comb.add(tuple(childnode.indexOfZero))
+        # childnode.accmuResidual = True if attack else self.residual(childnode.indexOfZero)
 
 
 class Node:
@@ -87,7 +99,7 @@ def main():
 
     # Request the init and goal state
     sse = SecureStateEsitmation()
-
+    free_comb = set()
     # Initializing root node
     root = Node(acr=True, noa=0, level=1, attack=0, ioo=[], par=None)
 
@@ -106,7 +118,7 @@ def main():
 
         # chooses the lowest-cost node in frontier
         node = frontier.get()
-        print("node: ", [i * -1 + 1 for i in node.indexOfZero], node.level * -1 + 1)
+        # print("node: ", [i * -1 + 1 for i in node.indexOfZero], node.level * -1 + 1)
         # stop condition: when there is no state cost in the frontier
         # less than the temporary optimal cost
 
@@ -130,6 +142,8 @@ def main():
                 print("true attack ({0})        : ".format(len(sse.K)), sorted([i + 1 for i in sse.K]))
                 print("estimate attack ({0})    : ".format(len(attack)), attack)
                 return False
+
+            print(free_comb)
             break
 
         # node with node.state has been expanded
@@ -145,8 +159,8 @@ def main():
 
             # child CHILD-NODE(problem,node,action)
             childNode = Node()
-            sse.genChild(node, childNode, attack)
-            print("childnode: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
+            sse.genChild(node, childNode, attack, free_comb)
+            # print("childnode: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
             if childNode.accmuResidual:
                 # only consider 0 residual
                 # option 1
@@ -154,7 +168,7 @@ def main():
                 # option 2
                 q = frontier.queue
                 if childNode not in q:
-                    print("childnode accepted: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
+                    # print("childnode accepted: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
                     frontier.put(childNode)
                 else:  # having equal attack indicator and level
 
@@ -166,9 +180,9 @@ def main():
                     # elif childNode.indexOfZero != q[indices].indexOfZero:
                     #     frontier.put(childNode)
 
-            print("nodes in queue")
-            for i in range(len(frontier.queue)):
-                print([i * -1 + 1 for i in frontier.queue[i].indexOfZero], frontier.queue[i].level * -1 + 1, frontier.queue[i].numOfAttacked)
+            # print("nodes in queue")
+            # for i in range(len(frontier.queue)):
+            #     print([i * -1 + 1 for i in frontier.queue[i].indexOfZero], frontier.queue[i].level * -1 + 1, frontier.queue[i].numOfAttacked)
 
     return True
 
@@ -183,20 +197,21 @@ if __name__ == "__main__":
     #         pickle.dump(testCase.K, filehandle)
     #         pickle.dump(testCase.x0, filehandle)
     #         pickle.dump(testCase.E, filehandle)
-    main()
+    # main()
 
-    # trial = 0
-    # while True:
-    #     trial = trial + 1
-    #     testCase = TestCase()
-    #     with open('sse_test', 'wb') as filehandle:
-    #         pickle.dump(testCase.Y, filehandle)
-    #         pickle.dump(testCase.obsMatrix, filehandle)
-    #         pickle.dump([testCase.p, testCase.n, testCase.tau], filehandle)
-    #         pickle.dump(testCase.K, filehandle)
-    #         pickle.dump(testCase.x0, filehandle)
-    #         pickle.dump(testCase.E, filehandle)
-    #     start = datetime.datetime.now()
-    #     if not main():
-    #         break
-    # print(trial)
+    from generate_test_case import TestCase
+    trial = 0
+    while True:
+        trial = trial + 1
+        testCase = TestCase()
+        with open('sse_test', 'wb') as filehandle:
+            pickle.dump(testCase.Y, filehandle)
+            pickle.dump(testCase.obsMatrix, filehandle)
+            pickle.dump([testCase.p, testCase.n, testCase.tau], filehandle)
+            pickle.dump(testCase.K, filehandle)
+            pickle.dump(testCase.x0, filehandle)
+            pickle.dump(testCase.E, filehandle)
+        start = datetime.datetime.now()
+        if not main():
+            break
+    print(trial)
