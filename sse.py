@@ -1,9 +1,8 @@
 """
 __author__ = chrislaw
 __project__ = SecureStateEstimation
-__date__ = 9/19/18
+__date__ = 9/26/18
 """
-
 import queue
 import datetime
 import numpy as np
@@ -12,11 +11,13 @@ from itertools import product
 import scipy.linalg as la
 import warnings
 
+
 class SecureStateEsitmation:
     def __init__(self):
         self.tol = 1e-5
-        # performance of tolorence, with larger tol, it is susceptible to errors,
+        # performance of tolorance, with larger tol, it is susceptible to errors,
         # treating attacked as attacked-free and attacked-free as attacked.
+        # with open('sse_test_from_mat', 'rb') as filehandle:
         with open('sse_test', 'rb') as filehandle:
             self.Y = pickle.load(filehandle)
             self.obsMatrix = pickle.load(filehandle)
@@ -24,6 +25,16 @@ class SecureStateEsitmation:
             self.K = pickle.load(filehandle)
             self.x0 = pickle.load(filehandle)
             self.E = pickle.load(filehandle)
+            self.noise_bound = pickle.load(filehandle)
+            self.A = pickle.load(filehandle)
+            self.C = pickle.load(filehandle)
+
+    def obs(self):
+        # whether the system is observable
+        import control
+        obs = control.obsv(self.A, self.C)
+        rank = np.linalg.matrix_rank(obs)
+        print("rank", rank, "n", self.n)
 
     def residual(self, indexOfZero):
         index = [x + y for x, y in product([-1 * i * self.tau for i in indexOfZero], range(self.tau))]
@@ -31,14 +42,12 @@ class SecureStateEsitmation:
         O = self.obsMatrix[index, :]
         x, res, _, _ = la.lstsq(O, Y)
         res = np.linalg.norm(Y - O.dot(x))
-
-        if res <= self.tol:
-            # if np.shape(res) == (0, ) or res[0] <= self.tol:  # one intersection point
+        if res <= self.tol + np.linalg.norm(self.noise_bound[np.array(indexOfZero) * -1, :]):
             return True
         else:  # no intersection point
             return False
 
-    def genChild(self, parentnode, childnode, attack, free_comb):
+    def genChild(self, parentnode, childnode, attack):
         """Generating childnote
         """
         childnode.attack = attack
@@ -46,20 +55,7 @@ class SecureStateEsitmation:
         childnode.parent = parentnode
         childnode.numOfAttacked = parentnode.numOfAttacked + attack
         childnode.indexOfZero = parentnode.indexOfZero + [childnode.level] if not attack else parentnode.indexOfZero
-
-        id = 0
-        if attack:
-            childnode.accmuResidual = True
-        elif free_comb:
-            for s in free_comb:
-                if set(childnode.indexOfZero) <= set(s):
-                    childnode.accmuResidual = True
-                    id = 1
-        if not id:
-            childnode.accmuResidual = self.residual(childnode.indexOfZero)
-            if childnode.accmuResidual:
-                free_comb.add(tuple(childnode.indexOfZero))
-        # childnode.accmuResidual = True if attack else self.residual(childnode.indexOfZero)
+        childnode.accmuResidual = True if attack else self.residual(childnode.indexOfZero)
 
 
 class Node:
@@ -75,8 +71,7 @@ class Node:
 
     def __eq__(self, other):
         if isinstance(other, Node):
-            return self.attack == other.attack and self.level == other.level and self.indexOfZero == other.indexOfZero
-            #  should we add the last one. yes, accurate, no, speed
+            return self.attack == other.attack and self.level == other.level
         else:
             return False
 
@@ -93,115 +88,126 @@ class Node:
 
 
 def main():
+
     warnings.filterwarnings(action="ignore", module="scipy", message="^internal gelsd")
 
-    # start = datetime.datetime.now()
-
+    level = []
     # Request the init and goal state
     sse = SecureStateEsitmation()
-    free_comb = set()
+
     # Initializing root node
     root = Node(acr=True, noa=0, level=1, attack=0, ioo=[], par=None)
 
     # Initializing frontier
     frontier = queue.PriorityQueue()
-    # a priority queue ordered by PATH-COST, with node as the only element
+    discard = queue.PriorityQueue()   # for lazy research when previous search fails
+    # a priority queue ordered, with node as the only element
     frontier.put(root)
     # Initializing explored set
     exploredSet = set()  # set
 
     while True:
 
-        # EMPTY?(frontier) then return failure
-        if frontier.empty():
+        # EMPTY?(frontier) and EMPTY?(discard), then return failure
+        if frontier.empty() and discard.empty():
             break
+        if frontier.empty():
+            frontier.put(discard.get())
+            exploredSet.clear()
+            continue
+
+            # break
 
         # chooses the lowest-cost node in frontier
         node = frontier.get()
-        # print("node: ", [i * -1 + 1 for i in node.indexOfZero], node.level * -1 + 1)
+        # print(node.level * -1 + 1, node.attack, [ i * -1 + 1 for i in node.indexOfZero])
+        level.append(node.level * -1 + 1)
+
         # stop condition: when there is no state cost in the frontier
         # less than the temporary optimal cost
 
         if node.level == -1 * (sse.p - 1):
-            print("time: ", (datetime.datetime.now() - start).total_seconds())
             index = [x + y for x, y in product([-1 * i * sse.tau for i in node.indexOfZero], range(sse.tau))]
             Y = sse.Y[index, :]
             O = sse.obsMatrix[index, :]
             x, res, _, _ = la.lstsq(O, Y)
-            # print("Estimate Error: ", np.linalg.norm(x - sse.x0) / np.linalg.norm(sse.x0))
-            # print(np.linalg.norm(Y - O.dot(x)))
-            # print(np.linalg.norm(sse.Y - sse.obsMatrix.dot(sse.x0) - sse.E))
-            # print(node.indexOfZero)
+            # print("error: ", np.linalg.norm(x - sse.x0)/np.linalg.norm(sse.x0))
             attackfree = [-1 * i + 1 for i in node.indexOfZero]
             attack = [i for i in range(1, sse.p + 1) if i not in attackfree]
 
-            print("true attack ({0})        : ".format(len(sse.K)), sorted([i + 1 for i in sse.K]))
+            print("true attack ({0})        : ".format(len(sse.K)), sorted([i+1 for i in sse.K]))
             print("estimate attack ({0})    : ".format(len(attack)), attack)
 
-            if attack != sorted([i + 1 for i in sse.K]):
-                print("true attack ({0})        : ".format(len(sse.K)), sorted([i + 1 for i in sse.K]))
+            if attack != sorted([i+1 for i in sse.K]):
+                print("true attack ({0})        : ".format(len(sse.K)), sorted([i+1 for i in sse.K]))
                 print("estimate attack ({0})    : ".format(len(attack)), attack)
-                return False
+                return False, False
+                # break
+            # ----------------- date from matlab ---------------
+            # print("true attack ({0})        : ".format(len(sse.K)), sorted([i+1 for i in sse.K]))
+            # print("estimate attack ({0})    : ".format(len(attack)), attack)
+            # --------------------------------------------------
+            return np.linalg.norm(x - sse.x0)/np.linalg.norm(sse.x0), (datetime.datetime.now() - start).total_seconds()
 
-            print(free_comb)
-            break
-
-        # node with node.state has been expanded
-        if node in exploredSet:
-            continue
-            # if we differentiate the difference of indexZero, it will expand the whole search dimension,
-            # which will be much slower
-        else:
-            # add node.STATE to explored
-            exploredSet.add(node)
+        exploredSet.add(node)
 
         for attack in [0, 1]:
 
             # child CHILD-NODE(problem,node,action)
             childNode = Node()
-            sse.genChild(node, childNode, attack, free_comb)
-            # print("childnode: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
+            sse.genChild(node, childNode, attack)
+
             if childNode.accmuResidual:
+
+                # # early stop
+                if (-1 * childNode.level + 1) - len(childNode.indexOfZero) > sse.p // 2 - 1: # we only discard bad nodes
+                    continue
+
+                if childNode in exploredSet:
+                    discard.put(childNode)
+                    continue
                 # only consider 0 residual
-                # option 1
-                # frontier.put(childNode)
+
                 # option 2
                 q = frontier.queue
                 if childNode not in q:
                     # print("childnode accepted: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
                     frontier.put(childNode)
-                else:  # having equal attack indicator and level
-
-                    indices = q.index(childNode)
-                    if childNode < q[indices]:
-                        # print("childnode: ", [i * -1 + 1 for i in childNode.indexOfZero], childNode.level * -1 + 1)
-                        q.remove(q[indices])
-                        frontier.put(childNode)
-                    # elif childNode.indexOfZero != q[indices].indexOfZero:
-                    #     frontier.put(childNode)
-
-            # print("nodes in queue")
-            # for i in range(len(frontier.queue)):
-            #     print([i * -1 + 1 for i in frontier.queue[i].indexOfZero], frontier.queue[i].level * -1 + 1, frontier.queue[i].numOfAttacked)
+                else:
+                    discard.put(childNode)
 
     return True
 
 
 if __name__ == "__main__":
-    start = datetime.datetime.now()
-    # testCase = TestCase()
-    # with open('sse_test', 'wb') as filehandle:
+    # -------------- level v.s. iteration ---------------
+    # from Delta import TestCase
+    # level = []
+    # for i in range(1000):
+    #     # print(i)
+    #     testCase = TestCase()
+    #     with open('sse_test_worst1', 'wb') as filehandle:
     #         pickle.dump(testCase.Y, filehandle)
     #         pickle.dump(testCase.obsMatrix, filehandle)
     #         pickle.dump([testCase.p, testCase.n, testCase.tau], filehandle)
     #         pickle.dump(testCase.K, filehandle)
     #         pickle.dump(testCase.x0, filehandle)
     #         pickle.dump(testCase.E, filehandle)
-    # main()
+    #         pickle.dump(testCase.noise_bound, filehandle)
+    #         pickle.dump(testCase.A, filehandle)
+    #         pickle.dump(testCase.C, filehandle)
+    #     start = datetime.datetime.now()
+    #     l = main()
+    #     level.append(l)
+    #     print(l)
+    # print(np.mean(level), np.min(level), np.max(level))
 
-    from generate_test_case import TestCase
+    # ------------- multiple time runtime --------------
     trial = 0
-    while True:
+    time = []
+    error = []
+    from generate_test_case import TestCase
+    for i in range(10):
         trial = trial + 1
         testCase = TestCase()
         with open('sse_test', 'wb') as filehandle:
@@ -211,7 +217,27 @@ if __name__ == "__main__":
             pickle.dump(testCase.K, filehandle)
             pickle.dump(testCase.x0, filehandle)
             pickle.dump(testCase.E, filehandle)
+            pickle.dump(testCase.noise_bound, filehandle)
+            pickle.dump(testCase.A, filehandle)
+            pickle.dump(testCase.C, filehandle)
+            pickle.dump(testCase.s, filehandle)
         start = datetime.datetime.now()
-        if not main():
+        t, e = main()
+        time.append(t)
+        error.append(e)
+
+        if not t:
             break
     print(trial)
+    print(np.mean(error), np.mean(time))
+
+    # ----------------- date from matlab ---------------
+    # from data_from_mat import TestCase
+    # testCase = TestCase()
+    # time = []
+    # for i in range(1):
+    #     start = datetime.datetime.now()
+    #     t, e = main()
+    #     time.append(t)
+    # print(e, np.mean(time))
+    # -----------------------------------------------------

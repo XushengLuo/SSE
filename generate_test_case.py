@@ -3,6 +3,9 @@ __author__ = chrislaw
 __project__ = SecureStateEstimation
 __date__ = 9/18/18
 """
+""" generate data for future use
+"""
+
 from scipy.sparse import random
 import numpy as np
 from control.matlab import *
@@ -11,8 +14,8 @@ import pickle
 
 class TestCase(object):
     def __init__(self):
-        self.p = 150
-        self.n = 100
+        self.p = 20
+        self.n = 20
         self.tau = self.n
         # Generate a system with a random A matrix
         self.A = random(self.n, self.n, 0.3)
@@ -27,13 +30,13 @@ class TestCase(object):
         self.sys = ss(self.A, np.zeros((self.n, 1)), self.C, np.zeros((self.p, 1)), self.Ts)
         self.x0 = np.random.randn(self.n, 1)
 
-        self.attackpower = 100 # Magnitude of the attacks (i.e., norm of the attack vector)
+        self.attackpower = 5 # Magnitude of the attacks (i.e., norm of the attack vector)
         self.max_s = int(np.floor(self.p // 3) - 1)
         self.s = self.max_s # np.random.randint(0, self.max_s, 1)[0]
 
         # Choose a random attacking set K of size qs
         self.per = np.random.permutation(self.p)
-        # self.per = sorted(range(0, self.p), reverse=True)
+        # self.per = sorted(range(0, self.p))
         self.K = self.per[0:self.s]
 
         # Choose an initial condition
@@ -41,9 +44,9 @@ class TestCase(object):
         Y = np.array([]).reshape(self.p, 0)
         E = np.array([]).reshape(self.p, 0)
         # noise power
-        noise_power = 0.01
-        process_noise_power = 0.05
-        self.noise_bound = np.array([20]*self.p).reshape(self.p, 1)  # 20
+        noise_power = 0 # 0.01
+        process_noise_power = 0 # 0.05
+        self.noise_bound = np.array([0]*self.p).reshape(self.p, 1) # when noise = 0.01 process noise = 0.05, w_i = 1.5
 
         for i in range(0, self.tau):
             # Generate a random attack vector supported on K
@@ -81,9 +84,6 @@ class TestCase(object):
             #       O_p ]
 
 
-# lazy search
-# depth first
-
 testCase = TestCase()
 with open('sse_test', 'wb') as filehandle:
             pickle.dump(testCase.Y, filehandle)
@@ -95,5 +95,6 @@ with open('sse_test', 'wb') as filehandle:
             pickle.dump(testCase.noise_bound, filehandle)
             pickle.dump(testCase.A, filehandle)
             pickle.dump(testCase.C, filehandle)
+            pickle.dump(testCase.s, filehandle)
 
 
